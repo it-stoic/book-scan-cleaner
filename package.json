@@ -1,0 +1,25 @@
+{
+  "name": "book-scan-cleaner",
+  "version": "1.0.0",
+  "description": "Whiten the paper of a scanned book and brush the scanner's dirt off it, locally in the browser",
+  "main": "clean-core.js",
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "test": "node test/clean.test.js",
+    "vendor": "node scripts/vendor.js"
+  },
+  "keywords": [],
+  "author": "Filip Šimunjak",
+  "license": "AGPL-3.0-or-later",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.9.0",
+      "onFail": "download"
+    }
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "3.11.174"
+  }
+}

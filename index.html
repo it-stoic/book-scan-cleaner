@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book Scan Cleaner</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2f6fd0">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+</head>
+<body>
+
+<header>
+  <h1>Book Scan Cleaner</h1>
+  <p>Whiten the grey paper of a scanned book and brush the scanner's dirt off it. Everything happens on this computer: nothing is uploaded, and there is no page limit.</p>
+  <button type="button" id="install" class="primary install" hidden>Install as an app</button>
+</header>
+
+<section id="drop" class="drop">
+  <input type="file" id="file" accept="application/pdf,.pdf" hidden>
+  <p><strong>Drop a PDF here</strong></p>
+  <p class="muted">or <button type="button" id="pick" class="link">choose a file</button></p>
+</section>
+
+<main id="workspace" hidden>
+  <div class="filebar">
+    <span id="fileName" class="name"></span>
+    <span id="fileMeta" class="muted"></span>
+    <button type="button" id="change" class="link">change file</button>
+  </div>
+
+  <div class="viewbar">
+    <div class="tabs" id="viewTabs">
+      <button type="button" data-view="after" class="on">Cleaned</button>
+      <button type="button" data-view="before">Original</button>
+    </div>
+    <div class="pager" id="pager">
+      <button type="button" id="prev" title="Previous page">‹</button>
+      <input type="number" id="pageNum" min="1" value="1">
+      <span class="muted" id="pageTotal"></span>
+      <button type="button" id="next" title="Next page">›</button>
+    </div>
+    <span class="muted" id="renderInfo"></span>
+  </div>
+
+  <p class="hint">Click anywhere on the page to see that spot life-size. It is the only way to tell whether the dots and accents of the type came through.</p>
+
+  <div class="stage">
+    <canvas id="preview"></canvas>
+  </div>
+
+  <div class="closeup">
+    <figure>
+      <figcaption>Original, life-size</figcaption>
+      <canvas id="detailBefore"></canvas>
+    </figure>
+    <figure>
+      <figcaption>Cleaned, life-size</figcaption>
+      <canvas id="detailAfter"></canvas>
+    </figure>
+  </div>
+
+  <div class="controls">
+    <div class="groups">
+      <section class="group">
+        <h3>Paper</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="whiten" checked> Whiten the paper</label>
+        </div>
+        <div class="field">
+          <label class="tag" for="strength">gentle</label>
+          <input type="range" id="strength" min="0" max="100" step="1" value="50" aria-label="Whitening strength">
+          <label class="tag" for="strength">strong</label>
+        </div>
+        <p class="note muted">Grey paper and the shadow of the gutter go white. Strokes are left alone: this cannot lighten anything darker than the paper around it.</p>
+      </section>
+
+      <section class="group">
+        <h3>Specks</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="despeckle" checked> Remove specks</label>
+        </div>
+        <div class="field">
+          <label class="tag" for="speckSize">small</label>
+          <input type="range" id="speckSize" min="50" max="200" step="5" value="100" aria-label="Largest speck removed">
+          <label class="tag" for="speckSize">bigger</label>
+        </div>
+        <p class="note muted" id="speckInfo">Only marks smaller than the type on that page, and only where there is clear paper all around them. That is what a dot on an i and a caron on a č never have.</p>
+      </section>
+
+      <section class="group">
+        <h3>Bands</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="deband" checked> Take out the scanner's dark bands and smears</label>
+        </div>
+        <p class="note muted" id="bandInfo">The strip down the side where the lid did not reach, the shadow the gutter throws, and the smear where that shadow burns out. Thin, starting at the edge of the sheet, and fading at its fringe: a photograph is none of those.</p>
+      </section>
+
+      <section class="group">
+        <h3>Output</h3>
+        <div class="field">
+          <span class="pair"><label class="tag" for="dpi">resolution</label>
+            <select id="dpi">
+              <option value="200">200 dpi</option>
+              <option value="300" selected>300 dpi</option>
+              <option value="400">400 dpi</option>
+            </select>
+          </span>
+          <span class="pair"><label class="tag" for="rangeFrom">pages from</label><input type="number" id="rangeFrom" min="1" step="1" placeholder="1"></span>
+          <span class="pair"><label class="tag" for="rangeTo">to</label><input type="number" id="rangeTo" min="1" step="1" placeholder="last"></span>
+        </div>
+        <p class="note muted">Cleaning draws every page again, so the pages that come out are pictures made at this resolution rather than the bytes that went in.</p>
+      </section>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="go" class="primary">Clean and save PDF</button>
+      <span id="status" class="muted"></span>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Straight from a book scanner? <a href="https://it-stoic.github.io/book-scan-splitter/">Book Scan Splitter</a> cuts spreads into pages first.
+  Free software under the <a href="https://github.com/it-stoic/book-scan-cleaner/blob/main/LICENSE">GNU AGPL v3</a>.
+  <a href="https://github.com/it-stoic/book-scan-cleaner">Source code</a>.
+</footer>
+
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="clean-core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
