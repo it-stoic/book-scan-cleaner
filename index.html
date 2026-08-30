@@ -100,6 +100,14 @@
       </section>
 
       <section class="group">
+        <h3>Tilt</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="deskew"> Straighten crooked pages (deskew)</label>
+        </div>
+        <p class="note muted" id="tiltInfo">Measured once the page is clean and applied last, so the bands and the specks are looked for on the pixels the scanner made rather than on pixels an angle has already moved.</p>
+      </section>
+
+      <section class="group">
         <h3>Output</h3>
         <div class="field">
           <span class="pair"><label class="tag" for="dpi">resolution</label>
@@ -132,6 +140,7 @@
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/pdf-lib.min.js"></script>
 <script src="clean-core.js"></script>
+<script src="deskew-core.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

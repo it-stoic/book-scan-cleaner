@@ -18,6 +18,7 @@ tablet, and in what OCR makes of it.
 - **Take off the dark bands and smears**: the strip down the side where the scanner
   lid did not reach, the shadow the gutter throws down the middle of a two-page sheet,
   and the smear where that shadow burns out.
+- **Straighten pages that were scanned crooked**, each one measured on its own.
 - **Look at any spot life-size** before you save, side by side with the original.
 
 **→ [Open Book Scan Cleaner](https://it-stoic.github.io/book-scan-cleaner/)**
@@ -162,6 +163,23 @@ gutter's shadow, and the smear where that shadow burns out. It runs before the s
 which matters: dirt lying along a band has the band for company, and once the band is
 gone that dirt stands alone and can be judged on its own.
 
+**Straighten crooked pages (deskew)** measures how far the page is tilted and turns it
+back. The measurement is the classic projection profile: the page's ink is rotated
+through candidate angles and the sharpest horizontal profile wins, because straight
+text lines pile up into tall spikes while crooked ones smear across many rows. A page
+with nothing to measure, a full-page photo or a blank, is left alone rather than
+guessed at, and the count under the button says how many pages were turned.
+
+It runs *last*, on the page the other three rules have already been over, and the
+order is not arbitrary. The bands are the scanner's own furniture, square to the
+glass rather than to the book, and the rule that finds them asks for something long,
+thin, and with a foot in the margin; turn the page first and past about 4° a band no
+longer measures thin enough to be one. The same page's shadow and edge strip are also
+the darkest things on the sheet, so measuring an angle before they are gone means
+measuring them as if they were text. And straightening is the one step here that
+moves a pixel: doing it last leaves the speck rule measuring ink the scanner made
+rather than ink an interpolation has smeared.
+
 **Resolution** is the size the pages are drawn at, 300 dpi by default. 200 makes
 smaller files out of scans that were never sharp to begin with; 400 is worth it for
 small print you intend to run through OCR.
@@ -181,10 +199,10 @@ pnpm vendor   # refresh vendor/ from node_modules
 pnpm test     # the cleaning rules, on a page built for the purpose
 ```
 
-`clean-core.js` holds the whole of the image work and knows nothing about the DOM: it
-takes grayscale bytes and gives grayscale bytes back, which is why the tests can run
-in Node with no canvas. `app.js` is the part that turns PDF pages into pixels and
-back again.
+`clean-core.js` holds the whole of the image work and `deskew-core.js` the
+straightening; neither knows anything about the DOM, both take grayscale bytes and
+give grayscale bytes back, which is why the tests can run in Node with no canvas.
+`app.js` is the part that turns PDF pages into pixels and back again.
 
 The tests are the interesting half of the repository. Each rule is put on a page built
 to break it: type with a mark over every fourth stroke, a page number below the block,

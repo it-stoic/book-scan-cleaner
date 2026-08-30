@@ -26,15 +26,17 @@
     whiten: el('whiten'), strength: el('strength'),
     despeckle: el('despeckle'), speckSize: el('speckSize'), speckInfo: el('speckInfo'),
     deband: el('deband'), bandInfo: el('bandInfo'),
+    deskew: el('deskew'), tiltInfo: el('tiltInfo'),
     dpi: el('dpi'), rangeFrom: el('rangeFrom'), rangeTo: el('rangeTo'),
     go: el('go'), status: el('status'), install: el('install'),
   };
 
   var state = {
     file: null, pdf: null, pageCount: 0, page: 1,
-    whiten: true, strength: 0.5, despeckle: true, speckSize: 1, deband: true, dpi: 300,
+    whiten: true, strength: 0.5, despeckle: true, speckSize: 1, deband: true,
+    deskew: false, dpi: 300,
     view: 'after',
-    source: null,   // the page as it was rendered: { page, dpi, canvas, gray, w, h }
+    source: null,   // the page as it was rendered: { page, dpi, canvas, gray, w, h, angle }
     result: null,   // what cleaning made of it: { canvas, removed, box }
     focus: null,    // the point the life-size windows are centred on
     token: 0,
@@ -167,6 +169,19 @@
     canvas.height = 1;
   }
 
+  /*
+   * The last step and the only one that moves a pixel. The angle is read off
+   * the page the cleaning rules have already been over, because the gutter's
+   * shadow and the strip up the side are the darkest things on a scan and a
+   * projection profile counts them as text; and the rules themselves are left
+   * to measure ink the scanner made rather than ink an interpolation has
+   * smeared. Pass `known` to reuse an angle already measured for this page.
+   */
+  function straighten(gray, w, h, known) {
+    var angle = known === undefined ? DeskewCore.measureSkew(gray, w, h) : known;
+    return { gray: DeskewCore.rotateGray(gray, w, h, angle), angle: angle };
+  }
+
   /* -------------------------------------------------------------- preview */
 
   async function refresh(reload) {
@@ -195,9 +210,15 @@
     if (token !== state.token) return;
 
     var out = CleanCore.clean(src.gray, src.w, src.h, options());
+    var pixels = out.gray, angle = 0;
+    if (state.deskew) {
+      var turn = straighten(out.gray, src.w, src.h, src.angle);
+      src.angle = angle = turn.angle;
+      pixels = turn.gray;
+    }
     release(state.result && state.result.canvas);
     state.result = {
-      canvas: fromGray(out.gray, src.w, src.h),
+      canvas: fromGray(pixels, src.w, src.h),
       removed: out.removed,
       box: out.box,
     };
@@ -208,6 +229,11 @@
         : { x: src.w / 2, y: src.h / 2 };
     }
     ui.renderInfo.textContent = src.w + ' × ' + src.h + ' pixels at ' + src.dpi + ' dpi';
+    ui.tiltInfo.textContent = !state.deskew
+      ? 'Pages are left at the angle they were scanned.'
+      : (angle
+        ? 'This page leaned ' + Math.abs(angle).toFixed(2) + '° and has been turned back.'
+        : 'This page is straight, or carries nothing straight enough to measure.');
     ui.bandInfo.textContent = state.deband
       ? out.bands + ' band' + (out.bands === 1 ? '' : 's') + ' taken off this page.'
       : 'Bands are left where they are.';
@@ -299,6 +325,10 @@
     state.deband = ui.deband.checked;
     refresh(false);
   });
+  ui.deskew.addEventListener('change', function () {
+    state.deskew = ui.deskew.checked;
+    refresh(false);
+  });
   ui.despeckle.addEventListener('change', function () {
     state.despeckle = ui.despeckle.checked;
     ui.speckSize.disabled = !state.despeckle;
@@ -343,7 +373,7 @@
     if (!state.pdf) return;
     ui.go.disabled = true;
     var range = effectiveRange();
-    var removed = 0, bands = 0;
+    var removed = 0, bands = 0, turned = 0, largest = 0;
     try {
       var doc = await PDFLib.PDFDocument.create();
       for (var n = range.from; n <= range.to; n++) {
@@ -357,7 +387,13 @@
         var out = CleanCore.clean(toGray(canvas), canvas.width, canvas.height, options());
         removed += out.removed;
         bands += out.bands;
-        var cleaned = fromGray(out.gray, canvas.width, canvas.height);
+        var pixels = out.gray;
+        if (state.deskew) {
+          var turn = straighten(out.gray, canvas.width, canvas.height);
+          pixels = turn.gray;
+          if (turn.angle) { turned++; largest = Math.max(largest, Math.abs(turn.angle)); }
+        }
+        var cleaned = fromGray(pixels, canvas.width, canvas.height);
         release(canvas);
         var image = await doc.embedJpg(await jpegBytes(cleaned));
         release(cleaned);
@@ -368,6 +404,12 @@
       save(bytes, state.file.name.replace(/\.pdf$/i, '') + '-clean.pdf');
       status('Done: ' + (range.to - range.from + 1) + ' pages, '
         + removed + ' specks and ' + bands + ' bands removed, '
+        + (state.deskew
+          ? (turned
+            ? turned + ' page' + (turned === 1 ? '' : 's') + ' straightened by up to '
+              + largest.toFixed(1) + '°, '
+            : 'no page crooked enough to straighten, ')
+          : '')
         + (bytes.length / 1048576).toFixed(1) + ' MB.');
     } catch (err) {
       status('Error: ' + err.message);
