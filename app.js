@@ -7,7 +7,8 @@
 (function () {
   'use strict';
 
-  var PREVIEW_WIDTH = 880;   // CSS pixels of the page preview
+  var PREVIEW_WIDTH = 880;   // CSS pixels the page preview may grow to
+  var VIEW_MIN_HEIGHT = 260; // shortest the preview is ever shown
   var DETAIL_W = 430;        // life-size window on the page, in output pixels
   var DETAIL_H = 250;
   var MAX_PIXELS = 40e6;     // ceiling on one rendered page, to stay inside memory
@@ -247,14 +248,41 @@
     status('');
   }
 
+  /*
+   * The page is shown at whatever is left of the screen below the header, rather
+   * than at full width: a tall page drawn 880 pixels across pushes the life-size
+   * pair and the controls out of sight, and takes several screens on a phone.
+   * The canvas still carries the screen's pixel ratio, so it is no softer for it.
+   */
+  function viewSize(aspect) {
+    var stage = ui.preview.parentElement;
+    var pad = parseFloat(getComputedStyle(stage).paddingLeft) || 0;
+    var room = Math.max(200, stage.clientWidth - pad * 2);
+    var w = Math.min(PREVIEW_WIDTH, room);
+    var h = w * aspect;
+    var free = window.innerHeight - stage.getBoundingClientRect().top - window.scrollY;
+    var roof = Math.max(VIEW_MIN_HEIGHT, free - pad * 2 - 24);
+    if (h > roof) { h = roof; w = h / aspect; }
+    return { w: Math.round(w), h: Math.round(h) };
+  }
+
+  var fitTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(drawStage, 120);
+  });
+
   function drawStage() {
     var src = state.source;
     if (!src || !state.result) return;
-    var w = Math.min(PREVIEW_WIDTH, src.w);
-    var h = Math.round(w * src.h / src.w);
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var view = viewSize(src.h / src.w);
+    var w = Math.round(view.w * dpr);
+    var h = Math.round(view.h * dpr);
     ui.preview.width = w;
     ui.preview.height = h;
-    ui.preview.style.width = w + 'px';
+    ui.preview.style.width = view.w + 'px';
+    ui.preview.style.height = view.h + 'px';
     var ctx = ui.preview.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, w, h);
@@ -263,6 +291,7 @@
     var scale = w / src.w;
     if (state.focus) {
       ctx.strokeStyle = 'rgba(20, 26, 34, .75)';
+      ctx.lineWidth = dpr;
       ctx.strokeRect(
         (state.focus.x - DETAIL_W / 2) * scale, (state.focus.y - DETAIL_H / 2) * scale,
         DETAIL_W * scale, DETAIL_H * scale,
