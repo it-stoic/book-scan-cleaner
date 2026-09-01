@@ -175,6 +175,75 @@ function run() {
     assert.ok(at(swept.gray, p.x, p.y) <= 150, 'a page number survives it too');
   });
 
+  /* --- stipple paler than ink is dirt too --------------------------------- */
+
+  // the scatter a scanner leaves is often not dark enough to be ink at all: grey
+  // flecks most of the way to white, which every rule written about ink walks
+  // straight past. What tells them from a mark of the book's own is that a mark
+  // has printing in the middle of it, however soft its edges are
+  const ghosted = new Uint8Array(white);
+  const ghosts = [];
+  let dust = 3;
+  const throwDust = () => (dust = (dust * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  while (ghosts.length < 40) {
+    const x = 20 + Math.floor(throwDust() * 60);      // the empty left margin
+    const y = 100 + Math.floor(throwDust() * 700);
+    const side = 2 + Math.floor(throwDust() * 3);
+    const tone = 190 + Math.floor(throwDust() * 40);  // grey, and nowhere near ink
+    for (let dy = 0; dy < side; dy++) {
+      for (let dx = 0; dx < side; dx++) ghosted[(y + dy) * W + x + dx] = tone;
+    }
+    ghosts.push({ x: x + 1, y: y + 1 });
+  }
+  // a full stop of the book's own, scanned as softly as any of them: grey at the
+  // edges, ink in the middle, and a word in front of it
+  for (let y = 870; y < 890; y++) {
+    for (let x = 200; x < 204; x++) ghosted[y * W + x] = INK;
+  }
+  for (let dy = 0; dy < 4; dy++) {
+    for (let dx = 0; dx < 4; dx++) ghosted[(886 + dy) * W + 208 + dx] = 200;
+  }
+  ghosted[887 * W + 209] = INK;
+  ghosted[887 * W + 210] = INK;
+
+  const swiped = despeckle(ghosted, W, H, { threshold: cut, stroke: stroke });
+  let haunted = 0;
+  ghosts.forEach((g) => { if (at(swiped.gray, g.x, g.y) < 250) haunted++; });
+  assert.ok(haunted <= 4, `grey stipple is dirt: ${haunted} of ${ghosts.length} left standing`);
+  assert.ok(
+    at(swiped.gray, 209, 887) <= 150,
+    'a mark with printing in the middle of it is not a ghost',
+  );
+  assert.ok(
+    at(swiped.gray, 210, 888) < 250,
+    'and it keeps the grey it was scanned with',
+  );
+  marks.forEach((m) => {
+    assert.ok(at(swiped.gray, m.x, m.y) <= 150, 'marks survive the pale pass');
+  });
+  pageNumber.forEach((p) => {
+    assert.ok(at(swiped.gray, p.x, p.y) <= 150, 'a page number survives it too');
+  });
+
+  // and a speck is lifted with the grey it frays into, not just the pixels the
+  // threshold happened to catch, because a ring of halo is the same complaint
+  const haloed = new Uint8Array(white);
+  for (let dy = -2; dy <= 4; dy++) {
+    for (let dx = -2; dx <= 4; dx++) haloed[(600 + dy) * W + 60 + dx] = 205;
+  }
+  for (let dy = 0; dy < 3; dy++) {
+    for (let dx = 0; dx < 3; dx++) haloed[(600 + dy) * W + 60 + dx] = INK;
+  }
+  const lifted = despeckle(haloed, W, H, { threshold: cut, stroke: stroke });
+  for (let dy = -2; dy <= 4; dy++) {
+    for (let dx = -2; dx <= 4; dx++) {
+      assert.strictEqual(
+        at(lifted.gray, 60 + dx, 600 + dy), 255,
+        `the halo at ${60 + dx},${600 + dy} should go with the speck`,
+      );
+    }
+  }
+
   /* --- the scanner's smears come off, printed blocks stay ----------------- */
 
   // a burn has no shape to speak of: a dark core frayed out into stipple, too

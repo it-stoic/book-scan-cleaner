@@ -31,6 +31,13 @@
  * with nothing else around, which is an ellipsis or a colon or a pair of
  * quotes. A hundred companions are a cloud, and a cloud is not company.
  *
+ * The stipple that is paler than ink is a case of its own, because a rule about
+ * ink cannot see it: a grey fleck two thirds of the way to white is not dark
+ * enough to be walked at all, and used to survive every pass untouched. It is
+ * caught by asking a blob gathered at that pale level whether there is any real
+ * printing anywhere inside it, since type and the punctuation set in the same
+ * ink are dark in the middle however soft their edges may be.
+ *
  * An earlier version also refused to touch anything inside a rectangle drawn
  * around the text, which sounds safer and is not. On a scan of two pages side by
  * side that rectangle covers four fifths of the sheet, so the dirt between the
@@ -63,11 +70,13 @@
   var LONELY_STROKES = 4;     // the paper a speck needs around it, in strokes
   var LONELY_SHARE = 0.02;    // ink share in that neighbourhood that saves it
   var CROWD_SPECKS = 4;       // more specks than this beside one is a cloud, not company
+  var GHOST_LEVEL = 0.8;      // a mark that stays this far from the ink towards the
+                              // paper has no printing anywhere in it
   var BAND_EDGE = 0.08;       // how far from the edge a band has to reach
   var BAND_LONG = 0.03;       // a band runs at least this share of the page
   var BAND_THIN = 0.12;       // and is at most this share of it across
   var BAND_RATIO = 6;         // and is at least this many times longer than wide
-  var BAND_GROW = 0.5;        // strokes of grey fringe taken with a band
+  var BAND_GROW = 0.5;        // strokes of grey fringe taken with a band or a speck
   var SMEAR_TILE = 4;         // strokes to a side of a tile the ink is weighed in
   var SMEAR_CORE = 0.55;      // ink share of such a tile that type never reaches
   var SMEAR_EDGE = 0.2;       // and the share the smear's own fringe falls away to
@@ -295,13 +304,14 @@
   function traceBlob(gray, w, h, seen, seed, cut, cap) {
     var stack = [seed];
     var x = seed % w, y = (seed / w) | 0;
-    var blob = { x0: x, x1: x, y0: y, y1: y, area: 0, pixels: [] };
+    var blob = { x0: x, x1: x, y0: y, y1: y, area: 0, dark: 255, pixels: [] };
     seen[seed] = 1;
     while (stack.length) {
       var at = stack.pop();
       x = at % w;
       y = (at / w) | 0;
       blob.area++;
+      if (gray[at] < blob.dark) blob.dark = gray[at];
       if (blob.area <= cap) blob.pixels.push(at);
       else if (blob.pixels.length) blob.pixels = [];
       if (x < blob.x0) blob.x0 = x;
@@ -322,6 +332,18 @@
       }
     }
     return blob;
+  }
+
+  function tooBig(blob, maxSide, maxArea) {
+    return blob.area > maxArea
+      || blob.x1 - blob.x0 + 1 > maxSide
+      || blob.y1 - blob.y0 + 1 > maxSide;
+  }
+
+  /* Nothing but paper around it, so there is no type it could belong to. */
+  function alone(blocks, blob) {
+    var near = neighbourInk(blocks, blob);
+    return near.ink <= near.area * LONELY_SHARE;
   }
 
   /*
@@ -345,6 +367,21 @@
    * of an ellipsis, or a colon, or a pair of quotes: marks that have nothing but
    * each other and are plainly still marks. What is left over is a fleck in a
    * cloud of flecks, and a cloud is not company.
+   *
+   * Then the walk is made a second time at a level near enough to the paper to
+   * pick up what the first walk never saw at all. A speck has to be darker than
+   * the page's own threshold before the first walk counts it as ink, and the
+   * grey stipple a scanner leaves is often not: it is dirt at two thirds of the
+   * way to white, invisible to a rule written about ink and perfectly visible to
+   * whoever is reading the page. So a blob is gathered at the pale level, and
+   * kept if it has any real printing in it anywhere. A mark of the book's own
+   * always has: type, and the punctuation set in the same ink, is dark in the
+   * middle however soft its edges are. A blob that is pale the whole way through
+   * was left by the scanner, and if it is small and alone as well, it goes.
+   *
+   * Both walks rub out the grey halo around what they take, and not only the
+   * pixels the threshold happened to catch. A speck lifted without its halo
+   * leaves a ring of exactly the dirt that is being complained about.
    */
   function despeckle(gray, w, h, options) {
     var opts = options || {};
@@ -356,17 +393,17 @@
     var size = Math.max(0.25, opts.size === undefined ? 1 : opts.size);
     var maxSide = Math.max(2, Math.round(stroke * SPECK_STROKES * size));
     var maxArea = Math.max(4, Math.round(stroke * stroke * SPECK_AREA * size * size));
+    var grow = Math.max(1, Math.round(stroke * BAND_GROW));
     var blocks = inkBlocks(gray, w, h, cut, Math.max(8, Math.round(stroke * LONELY_STROKES)));
     var crowd = new Uint32Array(blocks.cols * blocks.rows);
     var seen = new Uint8Array(gray.length);
     var specks = [];
-    var i, p, at;
+    var i, p, at, blob;
 
     for (i = 0; i < gray.length; i++) {
       if (seen[i] || gray[i] > cut) continue;
-      var blob = traceBlob(gray, w, h, seen, i, cut, maxArea);
-      if (blob.area > maxArea) continue;
-      if (blob.x1 - blob.x0 + 1 > maxSide || blob.y1 - blob.y0 + 1 > maxSide) continue;
+      blob = traceBlob(gray, w, h, seen, i, cut, maxArea);
+      if (tooBig(blob, maxSide, maxArea)) continue;
       for (p = 0; p < blob.pixels.length; p++) {
         at = blob.pixels[p];
         blocks.counts[(((at / w) | 0) / blocks.size | 0) * blocks.cols
@@ -378,11 +415,31 @@
 
     var removed = 0;
     for (i = 0; i < specks.length; i++) {
-      var near = neighbourInk(blocks, specks[i]);
-      if (near.ink > near.area * LONELY_SHARE) continue;
+      if (!alone(blocks, specks[i])) continue;
       var mates = neighbourCount(crowd, blocks, specks[i]);
       if (mates > 0 && mates <= CROWD_SPECKS) continue;
-      for (p = 0; p < specks[i].pixels.length; p++) out[specks[i].pixels[p]] = 255;
+      erase(out, w, h, specks[i], paleFor(cut), grow);
+      removed++;
+    }
+
+    // and the same walk again at a level so pale that it is nearly the paper.
+    // It only means anything once the paper is white: on grey paper everything
+    // under the level is joined to everything else and the walk is the page.
+    var ghost = cut + Math.round((255 - cut) * GHOST_LEVEL);
+    if (levelOf(histogram(gray), gray.length, PAPER_LEVEL) <= ghost) {
+      return { gray: out, removed: removed, stroke: stroke };
+    }
+    // a blob gathered this pale comes with the fringe the ink level never
+    // reached, so it is allowed the size of a speck plus that fringe
+    var ghostSide = maxSide + 2 * grow;
+    var ghostArea = Math.round(maxArea * ghostSide * ghostSide / (maxSide * maxSide));
+    seen = new Uint8Array(gray.length);
+    for (i = 0; i < out.length; i++) {
+      if (seen[i] || out[i] > ghost) continue;
+      blob = traceBlob(out, w, h, seen, i, ghost, ghostArea);
+      if (blob.dark <= cut) continue;   // there is printing in it, so it stays
+      if (tooBig(blob, ghostSide, ghostArea) || !alone(blocks, blob)) continue;
+      erase(out, w, h, blob, paleFor(ghost), grow);
       removed++;
     }
     return { gray: out, removed: removed, stroke: stroke };
@@ -492,7 +549,7 @@
           }
         }
       }
-      erase(page, w, h, { pixels: pixels }, cut, grow);
+      erase(page, w, h, { pixels: pixels }, paleFor(cut), grow);
       removed++;
     }
     return removed;
@@ -545,7 +602,7 @@
         var long = Math.max(band.x1 - band.x0, band.y1 - band.y0) + 1;
         var short = Math.min(band.x1 - band.x0, band.y1 - band.y0) + 1;
         if (long < short * BAND_RATIO) continue;
-        erase(out, w, h, band, cut, grow);
+        erase(out, w, h, band, paleFor(cut), grow);
         removed++;
       }
     }
@@ -553,12 +610,20 @@
   }
 
   /*
+   * How pale a pixel may be and still belong to what is being rubbed out: far
+   * enough above the level the thing was found at to take the grey halo a hard
+   * threshold always leaves around it.
+   */
+  function paleFor(level) {
+    return Math.min(250, level + (255 - level) * 0.6);
+  }
+
+  /*
    * Whitens a band and the grey it frays into, staying inside its own bounding
    * box: everything within `grow` of one of its pixels that is darker than the
    * paper goes, which takes the halo a hard threshold leaves behind.
    */
-  function erase(out, w, h, band, cut, grow) {
-    var pale = Math.min(250, cut + (255 - cut) * 0.6);
+  function erase(out, w, h, band, pale, grow) {
     for (var p = 0; p < band.pixels.length; p++) {
       var at = band.pixels[p];
       var px = at % w, py = (at / w) | 0;

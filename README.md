@@ -90,6 +90,17 @@ still marks. A hundred companions are not company, they are a cloud, and a cloud
 Whatever fails either test is kept. The tool would rather leave a speck than take a
 diacritic.
 
+The other thing being alone misses is dirt that is not dark. Half of what a scanner
+leaves is grey rather than black, most of the way to white, and a rule written about
+ink never even looks at it: the page's own ink threshold is drawn well below it, so
+those flecks were not blobs at all and survived every pass untouched. They are picked
+up on a second walk taken at a level near the paper, where the question is whether
+there is any real printing inside the blob. A mark of the book's own always has some:
+type, and the punctuation set in the same ink, is dark in the middle however soft the
+edges came out. A fleck that is pale the whole way through was left by the scanner,
+and if it is small and alone as well, it goes. Both walks take the grey halo along
+with what they remove, since a speck lifted out of its own halo just leaves a ring.
+
 **It will not take a photograph for a band.** A band is long, thin, and starts at the
 edge of the sheet, which is where the scanner is rather than where the book is. A
 plate on the page fails the thinness test, a headline fails all three, and a letter is
