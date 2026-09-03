@@ -14,6 +14,10 @@
   var MAX_PIXELS = 40e6;     // ceiling on one rendered page, to stay inside memory
   var QUALITY = 0.85;        // JPEG quality of the pages written out
   var SETTLE = 250;          // ms a slider is left alone before the page is redone
+  var TILT_LIMIT = 15;       // degrees a page may be turned by hand, either way
+  var CURVE_HANDLES = 4;     // points the reader drags along each curve
+  var CURVE_STEPS = 33;      // points the curve is handed to the model as
+  var HANDLE_REACH = 11;     // CSS pixels a handle answers a pointer within
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
@@ -27,7 +31,10 @@
     whiten: el('whiten'), strength: el('strength'),
     despeckle: el('despeckle'), speckSize: el('speckSize'), speckInfo: el('speckInfo'),
     deband: el('deband'), bandInfo: el('bandInfo'),
-    deskew: el('deskew'), tiltInfo: el('tiltInfo'),
+    deskew: el('deskew'), tiltAngle: el('tiltAngle'), tiltAuto: el('tiltAuto'),
+    tiltInfo: el('tiltInfo'),
+    dewarp: el('dewarp'), curveReset: el('curveReset'), curveInfo: el('curveInfo'),
+    align: el('align'), alignInfo: el('alignInfo'),
     dpi: el('dpi'), rangeFrom: el('rangeFrom'), rangeTo: el('rangeTo'),
     go: el('go'), status: el('status'), install: el('install'),
   };
@@ -35,9 +42,12 @@
   var state = {
     file: null, pdf: null, pageCount: 0, page: 1,
     whiten: true, strength: 0.5, despeckle: true, speckSize: 1, deband: true,
-    deskew: false, dpi: 300,
+    deskew: false, dewarp: false, align: false, dpi: 300,
     view: 'after',
-    source: null,   // the page as it was rendered: { page, dpi, canvas, gray, w, h, angle }
+    angles: {},     // pages whose angle was set by hand: page number → degrees
+    curves: {},     // pages with curves laid on them: page number → { top, bottom }
+    drag: null,
+    source: null,   // the page as it was rendered: { page, dpi, canvas, gray, w, h, auto }
     result: null,   // what cleaning made of it: { canvas, removed, box }
     focus: null,    // the point the life-size windows are centred on
     token: 0,
@@ -73,6 +83,8 @@
     state.source = null;
     state.result = null;
     state.focus = null;
+    state.angles = {};
+    state.curves = {};
     state.page = 1;
     ui.fileName.textContent = file.name;
     ui.fileMeta.textContent = file.size > 1048576
@@ -176,11 +188,75 @@
    * shadow and the strip up the side are the darkest things on a scan and a
    * projection profile counts them as text; and the rules themselves are left
    * to measure ink the scanner made rather than ink an interpolation has
-   * smeared. Pass `known` to reuse an angle already measured for this page.
+   * smeared. Pass `known` to reuse an angle already measured for this page, or
+   * to turn it by one the reader set by hand.
    */
   function straighten(gray, w, h, known) {
     var angle = known === undefined ? DeskewCore.measureSkew(gray, w, h) : known;
     return { gray: DeskewCore.rotateGray(gray, w, h, angle), angle: angle };
+  }
+
+  function contentBox(gray, w, h) {
+    return CleanCore.textBox(gray, w, h, CleanCore.threshold(gray));
+  }
+
+  // handles are kept as fractions of the sheet, so they survive a change of dpi
+  function defaultCurves(box, w, h) {
+    var x0 = box ? box.x0 / w : 0.1, x1 = box ? box.x1 / w : 0.9;
+    var y0 = box ? box.y0 / h : 0.1, y1 = box ? box.y1 / h : 0.9;
+    var top = [], bottom = [];
+    for (var i = 0; i < CURVE_HANDLES; i++) {
+      var x = x0 + (x1 - x0) * (i / (CURVE_HANDLES - 1));
+      top.push({ x: x, y: y0 });
+      bottom.push({ x: x, y: y1 });
+    }
+    return { top: top, bottom: bottom };
+  }
+
+  function spline(a, b, c, d, t) {
+    var t2 = t * t;
+    return 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t2
+      + (3 * b - a - 3 * c + d) * t2 * t);
+  }
+
+  function polyline(points, w, h) {
+    var out = [], last = points.length - 1;
+    for (var s = 0; s < CURVE_STEPS; s++) {
+      var t = (s / (CURVE_STEPS - 1)) * last;
+      var i = Math.min(last - 1, t | 0), f = t - i;
+      var p0 = points[i > 0 ? i - 1 : 0], p1 = points[i], p2 = points[i + 1];
+      var p3 = points[i + 2 <= last ? i + 2 : last];
+      out.push({
+        x: spline(p0.x, p1.x, p2.x, p3.x, f) * w,
+        y: spline(p0.y, p1.y, p2.y, p3.y, f) * h,
+      });
+    }
+    return out;
+  }
+
+  function curvesFor(page, gray, w, h) {
+    if (!state.curves[page]) state.curves[page] = defaultCurves(contentBox(gray, w, h), w, h);
+    return state.curves[page];
+  }
+
+  function flatten(gray, w, h, pair) {
+    return DewarpCore.dewarpGray(gray, w, h, polyline(pair.top, w, h), polyline(pair.bottom, w, h));
+  }
+
+  // slides only: what leaves one edge is the white the block was pushed against
+  function centreContent(canvas, box) {
+    var w = canvas.width, h = canvas.height;
+    var dx = Math.round((w - box.x0 - box.x1) / 2);
+    var dy = Math.round((h - box.y0 - box.y1) / 2);
+    if (!dx && !dy) return { canvas: canvas, dx: 0, dy: 0 };
+    var out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    var ctx = out.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(canvas, dx, dy);
+    return { canvas: out, dx: dx, dy: dy };
   }
 
   /* -------------------------------------------------------------- preview */
@@ -211,30 +287,64 @@
     if (token !== state.token) return;
 
     var out = CleanCore.clean(src.gray, src.w, src.h, options());
+    var byHand = state.angles[state.page];
     var pixels = out.gray, angle = 0;
     if (state.deskew) {
-      var turn = straighten(out.gray, src.w, src.h, src.angle);
-      src.angle = angle = turn.angle;
+      var turn = straighten(out.gray, src.w, src.h, byHand === undefined ? src.auto : byHand);
+      if (byHand === undefined) src.auto = turn.angle;
+      angle = turn.angle;
       pixels = turn.gray;
     }
+    var curves = null;
+    if (state.dewarp) {
+      curves = curvesFor(state.page, pixels, src.w, src.h);
+      pixels = flatten(pixels, src.w, src.h, curves);
+    }
+    var sheet = fromGray(pixels, src.w, src.h);
+    var box = out.box, shift = null;
+    if (state.align) {
+      var found = contentBox(pixels, src.w, src.h);
+      if (found) {
+        shift = centreContent(sheet, found);
+        if (shift.canvas !== sheet) { release(sheet); sheet = shift.canvas; }
+        box = {
+          x0: found.x0 + shift.dx, x1: found.x1 + shift.dx,
+          y0: found.y0 + shift.dy, y1: found.y1 + shift.dy,
+        };
+      }
+    }
     release(state.result && state.result.canvas);
-    state.result = {
-      canvas: fromGray(pixels, src.w, src.h),
-      removed: out.removed,
-      box: out.box,
-    };
+    state.result = { canvas: sheet, removed: out.removed, box: box };
     if (!state.focus) {
-      var box = out.box;
       state.focus = box
         ? { x: (box.x0 + box.x1) / 2, y: box.y0 + (box.y1 - box.y0) * 0.35 }
         : { x: src.w / 2, y: src.h / 2 };
     }
     ui.renderInfo.textContent = src.w + ' × ' + src.h + ' pixels at ' + src.dpi + ' dpi';
+    // not while it is being typed into, or the cursor jumps mid-number
+    if (document.activeElement !== ui.tiltAngle) {
+      ui.tiltAngle.value = state.deskew ? angle.toFixed(2) : '';
+    }
+    ui.tiltAngle.disabled = !state.deskew;
+    ui.tiltAuto.disabled = !state.deskew || byHand === undefined;
     ui.tiltInfo.textContent = !state.deskew
       ? 'Pages are left at the angle they were scanned.'
-      : (angle
-        ? 'This page leaned ' + Math.abs(angle).toFixed(2) + '° and has been turned back.'
-        : 'This page is straight, or carries nothing straight enough to measure.');
+      : (byHand !== undefined
+        ? 'This page is turned ' + angle.toFixed(2) + '° by hand. Every other page is still measured.'
+        : (angle
+          ? 'This page leaned ' + Math.abs(angle).toFixed(2) + '° and has been turned back.'
+          : 'This page is straight, or carries nothing straight enough to measure.'));
+    ui.curveReset.disabled = !state.dewarp;
+    ui.curveInfo.textContent = !state.dewarp
+      ? 'Pages are left with whatever bend the binding gave them.'
+      : 'Drag the handles so the curves follow the top and the bottom of the type. This page bends '
+        + Math.round(Math.abs(curves.top[1].y - curves.top[0].y) * src.h) + ' pixels away from straight.';
+    ui.alignInfo.textContent = !state.align
+      ? 'Pages keep the place on the sheet the scanner gave them.'
+      : (shift && (shift.dx || shift.dy)
+        ? 'This page was slid into the middle: ' + Math.abs(shift.dx) + ' pixels sideways, '
+          + Math.abs(shift.dy) + ' up or down.'
+        : 'This page is already in the middle, or carries nothing to line up.');
     ui.bandInfo.textContent = state.deband
       ? out.bands + ' band' + (out.bands === 1 ? '' : 's') + ' taken off this page.'
       : 'Bands are left where they are.';
@@ -289,6 +399,26 @@
     ctx.drawImage(state.view === 'before' ? src.canvas : state.result.canvas, 0, 0, w, h);
 
     var scale = w / src.w;
+    var pair = state.dewarp && state.curves[state.page];
+    if (pair) {
+      ctx.strokeStyle = 'rgba(47, 111, 208, .95)';
+      ctx.lineWidth = 2 * dpr;
+      [pair.top, pair.bottom].forEach(function (points) {
+        ctx.beginPath();
+        polyline(points, src.w, src.h).forEach(function (p, i) {
+          if (i) ctx.lineTo(p.x * scale, p.y * scale);
+          else ctx.moveTo(p.x * scale, p.y * scale);
+        });
+        ctx.stroke();
+        ctx.fillStyle = '#fff';
+        points.forEach(function (p) {
+          ctx.beginPath();
+          ctx.arc(p.x * src.w * scale, p.y * src.h * scale, 5 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        });
+      });
+    }
     if (state.focus) {
       ctx.strokeStyle = 'rgba(20, 26, 34, .75)';
       ctx.lineWidth = dpr;
@@ -316,8 +446,45 @@
     });
   }
 
+  function handleAt(e) {
+    var pair = state.dewarp && state.source && state.curves[state.page];
+    if (!pair) return null;
+    var rect = ui.preview.getBoundingClientRect();
+    var fx = (e.clientX - rect.left) / rect.width, fy = (e.clientY - rect.top) / rect.height;
+    var reach = HANDLE_REACH / rect.width, best = null, nearest = reach * reach;
+    ['top', 'bottom'].forEach(function (which) {
+      pair[which].forEach(function (p, i) {
+        var dx = p.x - fx, dy = (p.y - fy) * (rect.height / rect.width);
+        var distance = dx * dx + dy * dy;
+        if (distance <= nearest) { nearest = distance; best = { which: which, index: i }; }
+      });
+    });
+    return best;
+  }
+
+  ui.preview.addEventListener('pointerdown', function (e) {
+    var hit = handleAt(e);
+    if (!hit) return;
+    state.drag = hit;
+    ui.preview.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  ui.preview.addEventListener('pointermove', function (e) {
+    if (!state.drag) return;
+    var rect = ui.preview.getBoundingClientRect();
+    var point = state.curves[state.page][state.drag.which][state.drag.index];
+    point.x = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    point.y = clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    drawStage();
+  });
+  ui.preview.addEventListener('pointerup', function () {
+    if (!state.drag) return;
+    state.drag = null;
+    refresh(false);
+  });
+
   ui.preview.addEventListener('click', function (e) {
-    if (!state.source) return;
+    if (!state.source || handleAt(e)) return;
     var rect = ui.preview.getBoundingClientRect();
     var scale = state.source.w / rect.width;
     state.focus = {
@@ -356,6 +523,28 @@
   });
   ui.deskew.addEventListener('change', function () {
     state.deskew = ui.deskew.checked;
+    refresh(false);
+  });
+  ui.tiltAngle.addEventListener('input', function () {
+    var typed = parseFloat(ui.tiltAngle.value);
+    if (isNaN(typed)) return;
+    state.angles[state.page] = clamp(typed, -TILT_LIMIT, TILT_LIMIT);
+    later();
+  });
+  ui.tiltAuto.addEventListener('click', function () {
+    delete state.angles[state.page];
+    refresh(false);
+  });
+  ui.dewarp.addEventListener('change', function () {
+    state.dewarp = ui.dewarp.checked;
+    refresh(false);
+  });
+  ui.curveReset.addEventListener('click', function () {
+    delete state.curves[state.page];
+    refresh(false);
+  });
+  ui.align.addEventListener('change', function () {
+    state.align = ui.align.checked;
     refresh(false);
   });
   ui.despeckle.addEventListener('change', function () {
@@ -402,7 +591,7 @@
     if (!state.pdf) return;
     ui.go.disabled = true;
     var range = effectiveRange();
-    var removed = 0, bands = 0, turned = 0, largest = 0;
+    var removed = 0, bands = 0, turned = 0, largest = 0, lined = 0, flattened = 0;
     try {
       var doc = await PDFLib.PDFDocument.create();
       for (var n = range.from; n <= range.to; n++) {
@@ -418,12 +607,25 @@
         bands += out.bands;
         var pixels = out.gray;
         if (state.deskew) {
-          var turn = straighten(out.gray, canvas.width, canvas.height);
+          var turn = straighten(out.gray, canvas.width, canvas.height, state.angles[n]);
           pixels = turn.gray;
           if (turn.angle) { turned++; largest = Math.max(largest, Math.abs(turn.angle)); }
         }
+        if (state.dewarp) {
+          pixels = flatten(pixels, canvas.width, canvas.height,
+            curvesFor(n, pixels, canvas.width, canvas.height));
+          flattened++;
+        }
         var cleaned = fromGray(pixels, canvas.width, canvas.height);
         release(canvas);
+        if (state.align) {
+          var found = contentBox(pixels, cleaned.width, cleaned.height);
+          if (found) {
+            var placed = centreContent(cleaned, found);
+            if (placed.canvas !== cleaned) { release(cleaned); cleaned = placed.canvas; }
+            if (placed.dx || placed.dy) lined++;
+          }
+        }
         var image = await doc.embedJpg(await jpegBytes(cleaned));
         release(cleaned);
         var sheet = doc.addPage([size.width, size.height]);
@@ -438,6 +640,14 @@
             ? turned + ' page' + (turned === 1 ? '' : 's') + ' straightened by up to '
               + largest.toFixed(1) + '°, '
             : 'no page crooked enough to straighten, ')
+          : '')
+        + (state.dewarp
+          ? flattened + ' page' + (flattened === 1 ? '' : 's') + ' flattened, '
+          : '')
+        + (state.align
+          ? (lined
+            ? lined + ' page' + (lined === 1 ? '' : 's') + ' lined up, '
+            : 'no page needed lining up, ')
           : '')
         + (bytes.length / 1048576).toFixed(1) + ' MB.');
     } catch (err) {

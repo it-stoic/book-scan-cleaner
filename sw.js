@@ -3,7 +3,7 @@
  * Bump CACHE whenever one of the files below changes, otherwise installed
  * copies keep serving the old version.
  */
-var CACHE = 'book-scan-cleaner-v9';
+var CACHE = 'book-scan-cleaner-v10';
 var ASSETS = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ var ASSETS = [
   './style.css',
   './clean-core.js',
   './deskew-core.js',
+  './dewarp-core.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',

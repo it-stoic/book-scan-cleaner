@@ -104,7 +104,31 @@
         <div class="field">
           <label class="check"><input type="checkbox" id="deskew"> Straighten crooked pages (deskew)</label>
         </div>
+        <div class="field">
+          <span class="pair"><label class="tag" for="tiltAngle">angle on this page</label>
+            <input type="number" id="tiltAngle" step="0.05" min="-15" max="15" disabled aria-label="Angle this page is turned by"></span>
+          <button type="button" id="tiltAuto" class="link" disabled>measure it again</button>
+        </div>
         <p class="note muted" id="tiltInfo">Measured once the page is clean and applied last, so the bands and the specks are looked for on the pixels the scanner made rather than on pixels an angle has already moved.</p>
+      </section>
+
+      <section class="group">
+        <h3>Curve</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="dewarp"> Flatten pages that curve into the binding</label>
+        </div>
+        <div class="field">
+          <button type="button" id="curveReset" class="link" disabled>put the curves back on the type</button>
+        </div>
+        <p class="note muted" id="curveInfo">Drag the handles on the page so the two curves follow the top and the bottom of the block of type as it bends. Each page keeps its own pair.</p>
+      </section>
+
+      <section class="group">
+        <h3>Margins</h3>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="align"> Put the type in the same place on every page</label>
+        </div>
+        <p class="note muted" id="alignInfo">The block of type is slid to the middle of the sheet, so it stops jumping about as you turn the pages. Nothing is cropped and nothing is resized: the page only slides, and what goes off the edge is the white the block was pushed against.</p>
       </section>
 
       <section class="group">
@@ -142,6 +166,7 @@
 <script src="vendor/pdf-lib.min.js"></script>
 <script src="clean-core.js"></script>
 <script src="deskew-core.js"></script>
+<script src="dewarp-core.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
