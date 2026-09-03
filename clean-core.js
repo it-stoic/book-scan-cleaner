@@ -77,6 +77,8 @@
   var BAND_THIN = 0.12;       // and is at most this share of it across
   var BAND_RATIO = 6;         // and is at least this many times longer than wide
   var BAND_GROW = 0.5;        // strokes of grey fringe taken with a band or a speck
+  var BAND_BRIDGE = 3;        // strokes of gap that still leave a hairline one hairline
+  var BAND_HAIR = 0.5;        // strokes of ink a hairline may carry for each row it crosses
   var SMEAR_TILE = 4;         // strokes to a side of a tile the ink is weighed in
   var SMEAR_CORE = 0.55;      // ink share of such a tile that type never reaches
   var SMEAR_EDGE = 0.2;       // and the share the smear's own fringe falls away to
@@ -606,7 +608,82 @@
         removed++;
       }
     }
+    // last, on what the rules above left: the dashes they could not join up
+    removed += hairlines(out, w, h, cut, stroke, edgeX, edgeY, grow);
     return { gray: out, removed: removed };
+  }
+
+  /*
+   * The hairlines the lid leaves along an edge, which arrive broken into dashes
+   * and so are never one blob long enough for the band rule above to see. The
+   * dashes are bridged along the edge before the same long-and-thin questions
+   * are asked, and one more that decides everything: a hairline carries about a
+   * pixel of ink for every row it crosses, while anything the book printed
+   * carries at least a stroke's worth. Measured on the reference scan, the
+   * hairlines come to 0.7 to 0.95 pixels a row against a stroke of 4 to 6, and
+   * the edge of a halftone photograph that must survive comes to 18.
+   */
+  function hairlines(out, w, h, cut, stroke, edgeX, edgeY, grow) {
+    var bridge = Math.max(2, Math.round(stroke * BAND_BRIDGE));
+    return sweep(out, w, h, cut, stroke, grow, bridge, edgeX, true)
+      + sweep(out, w, h, cut, stroke, grow, bridge, edgeY, false);
+  }
+
+  function sweep(out, w, h, cut, stroke, grow, bridge, edge, down) {
+    if (edge <= 0) return 0;
+    var crossSpan = down ? w : h, alongSpan = down ? h : w;
+    var at = function (cross, along) {
+      return down ? along * w + cross : cross * w + along;
+    };
+    var margin = function (cross) { return cross < edge || cross >= crossSpan - edge; };
+    var mask = new Uint8Array(w * h);
+    var cross, along, k;
+    for (cross = 0; cross < crossSpan; cross++) {
+      if (!margin(cross)) continue;
+      for (along = 0; along < alongSpan; along++) {
+        if (out[at(cross, along)] > cut) continue;
+        for (k = 0; k <= bridge && along + k < alongSpan; k++) mask[at(cross, along + k)] = 1;
+      }
+    }
+
+    var seen = new Uint8Array(w * h);
+    var removed = 0;
+    for (cross = 0; cross < crossSpan; cross++) {
+      if (!margin(cross)) continue;
+      for (along = 0; along < alongSpan; along++) {
+        var start = at(cross, along);
+        if (seen[start] || !mask[start]) continue;
+        seen[start] = 1;
+        var stack = [cross, along], pixels = [];
+        var c0 = cross, c1 = cross, a0 = along, a1 = along;
+        while (stack.length) {
+          var ay = stack.pop(), ax = stack.pop();
+          var here = at(ax, ay);
+          if (out[here] <= cut) pixels.push(here);
+          if (ax < c0) c0 = ax;
+          if (ax > c1) c1 = ax;
+          if (ay < a0) a0 = ay;
+          if (ay > a1) a1 = ay;
+          for (var dc = -1; dc <= 1; dc++) {
+            for (var da = -1; da <= 1; da++) {
+              var nc = ax + dc, na = ay + da;
+              if (nc < 0 || na < 0 || nc >= crossSpan || na >= alongSpan) continue;
+              var n = at(nc, na);
+              if (seen[n] || !mask[n]) continue;
+              seen[n] = 1;
+              stack.push(nc, na);
+            }
+          }
+        }
+        var length = a1 - a0 + 1, width = c1 - c0 + 1;
+        if (length < alongSpan * BAND_LONG) continue;
+        if (length < width * BAND_RATIO) continue;
+        if (pixels.length >= length * stroke * BAND_HAIR) continue;
+        erase(out, w, h, { pixels: pixels }, paleFor(cut), grow);
+        removed++;
+      }
+    }
+    return removed;
   }
 
   /*

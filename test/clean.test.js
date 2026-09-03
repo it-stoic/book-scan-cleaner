@@ -135,6 +135,26 @@ function run() {
     assert.ok(at(debanded.gray, m.x, m.y) <= 150, 'marks survive band removal');
   });
 
+  /* --- a hairline arrives in dashes, and is still a hairline -------------- */
+
+  // what the lid leaves down an edge: one pixel of ink to a row, broken up
+  const hairy = new Uint8Array(white);
+  const dashes = [];
+  for (let y = 120; y < 820; y += 28) {
+    for (let t = 0; t < 20; t++) hairy[(y + t) * W + 8] = INK;
+    dashes.push(y + 10);
+  }
+  const dehaired = deband(hairy, W, H, { threshold: cut });
+  dashes.forEach((y) => {
+    assert.strictEqual(at(dehaired.gray, 8, y), 255, `the dash at ${y} is part of a hairline`);
+  });
+  assert.ok(at(dehaired.gray, 31, 505) <= 150, 'the note in the margin is not a hairline');
+  assert.ok(at(dehaired.gray, punctuation.x, punctuation.y) <= 150,
+    'nor is the speck the note keeps company');
+  marks.forEach((m) => {
+    assert.ok(at(dehaired.gray, m.x, m.y) <= 150, 'marks survive hairline removal');
+  });
+
   /* --- a mark or two is company, a cloud of them is not ------------------- */
 
   // marks that have nothing beside them but each other are still marks: the
